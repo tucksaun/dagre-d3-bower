@@ -822,7 +822,7 @@ function bind(func, thisArg) {
 }
 
 },{"d3":10,"dagre":11}],4:[function(require,module,exports){
-module.exports = '0.2.5-pre';
+module.exports = '0.2.5';
 
 },{}],5:[function(require,module,exports){
 exports.Set = require('./lib/Set');
