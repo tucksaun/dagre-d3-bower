@@ -48,6 +48,7 @@ global.dagreD3 = require('./index');
  */
 module.exports =  {
   Digraph: require('graphlib').Digraph,
+  Graph: require('graphlib').Graph,
   Renderer: require('./lib/Renderer'),
   json: require('graphlib').converter.json,
   layout: require('dagre').layout,
@@ -223,6 +224,14 @@ Renderer.prototype.run = function(graph, orgSvg) {
 function copyAndInitGraph(graph) {
   var copy = graph.copy();
 
+  if (copy.graph() === undefined) {
+    copy.graph({});
+  }
+
+  if (!('arrowheadFix' in copy.graph())) {
+    copy.graph().arrowheadFix = true;
+  }
+
   // Init labels if they were not present in the source graph
   copy.nodes().forEach(function(u) {
     var value = copyObject(copy.node(u));
@@ -279,7 +288,11 @@ function defaultDrawNodes(g, root) {
         .style('opacity', 0)
         .attr('class', 'node enter');
 
-  svgNodes.each(function(u) { addLabel(g.node(u), d3.select(this), true, 10, 10); });
+  svgNodes.each(function(u) {
+    var attrs = g.node(u),
+        domNode = d3.select(this);
+    addLabel(attrs, domNode, true, 10, 10);
+  });
 
   this._transition(svgNodes.exit())
       .style('opacity', 0)
@@ -317,13 +330,33 @@ var defaultDrawEdgePaths = function(g, root) {
     .classed('enter', false)
     .data(g.edges(), function(e) { return e; });
 
+  var DEFAULT_ARROWHEAD = 'url(#arrowhead)',
+      createArrowhead = DEFAULT_ARROWHEAD;
+  if (!g.isDirected()) {
+    createArrowhead = null;
+  } else if (g.graph().arrowheadFix !== 'false' && g.graph().arrowheadFix !== false) {
+    createArrowhead = function() {
+      var strokeColor = d3.select(this).style('stroke');
+      if (strokeColor) {
+        var id = 'arrowhead-' + strokeColor.replace(/[^a-zA-Z0-9]/g, '_');
+        getOrMakeArrowhead(root, id).style('fill', strokeColor);
+        return 'url(#' + id + ')';
+      }
+      return DEFAULT_ARROWHEAD;
+    };
+  }
+
   svgEdgePaths
     .enter()
       .append('g')
         .attr('class', 'edgePath enter')
         .append('path')
-          .style('opacity', 0)
-          .attr('marker-end', 'url(#arrowhead)');
+          .style('opacity', 0);
+
+  svgEdgePaths
+    .selectAll('path')
+    .each(function(e) { applyStyle(g.edge(e).style, d3.select(this)); })
+    .attr('marker-end', createArrowhead);
 
   this._transition(svgEdgePaths.exit())
       .style('opacity', 0)
@@ -362,31 +395,31 @@ function defaultPositionEdgeLabels(g, svgEdgeLabels) {
 }
 
 function isEllipse(obj) {
-    return Object.prototype.toString.call(obj) === '[object SVGEllipseElement]';
+  return Object.prototype.toString.call(obj) === '[object SVGEllipseElement]';
 }
 
 function isCircle(obj) {
-    return Object.prototype.toString.call(obj) === '[object SVGCircleElement]';
+  return Object.prototype.toString.call(obj) === '[object SVGCircleElement]';
 }
 
 function isPolygon(obj) {
-    return Object.prototype.toString.call(obj) === '[object SVGPolygonElement]';
+  return Object.prototype.toString.call(obj) === '[object SVGPolygonElement]';
 }
 
-function intersectNode(nd, p1, root){
+function intersectNode(nd, p1, root) {
   if (nd.useDef) {
-      var definedFig = root.select('defs #' + nd.useDef).node();
-      if (definedFig) {
-          var outerFig = definedFig.childNodes[0];
-          if (isCircle(outerFig) || isEllipse(outerFig)) {
-              return intersectEllipse(nd, outerFig, p1);
-          } else if (isPolygon(outerFig)) {
-              return intersectPolygon(nd, outerFig, p1);
-          }
-       }
+    var definedFig = root.select('defs #' + nd.useDef).node();
+    if (definedFig) {
+      var outerFig = definedFig.childNodes[0];
+      if (isCircle(outerFig) || isEllipse(outerFig)) {
+        return intersectEllipse(nd, outerFig, p1);
+      } else if (isPolygon(outerFig)) {
+        return intersectPolygon(nd, outerFig, p1);
+      }
     }
-    // TODO: use bpodgursky's shortening algorithm here
-    return intersectRect(nd, p1);
+  }
+  // TODO: use bpodgursky's shortening algorithm here
+  return intersectRect(nd, p1);
 }
 
 function defaultPositionEdgePaths(g, svgEdgePaths, root) {
@@ -401,10 +434,10 @@ function defaultPositionEdgePaths(g, svgEdgePaths, root) {
 
     var p0 = points.length === 0 ? target : points[0];
     var p1 = points.length === 0 ? source : points[points.length - 1];
-    
+
     points.unshift(intersectNode(source, p0, root));
     points.push(intersectNode(target, p1, root));
-    
+
     return d3.svg.line()
       .x(function(d) { return d.x; })
       .y(function(d) { return d.y; })
@@ -468,27 +501,44 @@ function defaultPostLayout() {
 }
 
 function defaultPostRender(graph, root) {
-  if (graph.isDirected() && root.select('#arrowhead').empty()) {
-    root
-      .append('svg:defs')
-        .append('svg:marker')
-          .attr('id', 'arrowhead')
-          .attr('viewBox', '0 0 10 10')
-          .attr('refX', 8)
-          .attr('refY', 5)
-          .attr('markerUnits', 'strokeWidth')
-          .attr('markerWidth', 8)
-          .attr('markerHeight', 5)
-          .attr('orient', 'auto')
-          .attr('style', 'fill: #333')
-          .append('svg:path')
-            .attr('d', 'M 0 0 L 10 5 L 0 10 z');
+  if (graph.isDirected()) {
+    // Fill = #333 is for backwards compatibility
+    getOrMakeArrowhead(root, 'arrowhead')
+      .attr('fill', '#333');
   }
+}
+
+function getOrMakeArrowhead(root, id) {
+  var search = root.select('#' + id);
+  if (!search.empty()) { return search; }
+
+  var defs = root.select('defs');
+  if (defs.empty()) {
+    defs = root.append('svg:defs');
+  }
+
+  var marker =
+    defs
+      .append('svg:marker')
+        .attr('id', id)
+        .attr('viewBox', '0 0 10 10')
+        .attr('refX', 8)
+        .attr('refY', 5)
+        .attr('markerUnits', 'strokeWidth')
+        .attr('markerWidth', 8)
+        .attr('markerHeight', 5)
+        .attr('orient', 'auto');
+
+  marker
+    .append('svg:path')
+      .attr('d', 'M 0 0 L 10 5 L 0 10 z');
+
+  return marker;
 }
 
 function addLabel(node, root, addingNode, marginX, marginY) {
   // If the node has 'useDef' meta data, we rely on that
-  if(node.useDef) {
+  if (node.useDef) {
     root.append('use').attr('xlink:href', '#' + node.useDef);
     return;
   }
@@ -501,26 +551,28 @@ function addLabel(node, root, addingNode, marginX, marginY) {
   if (node.height) {
     rect.attr('height', node.height);
   }
-  
-  var labelSvg = root.append('g').style('stroke', '#00');
+
+  var labelSvg = root.append('g'),
+      innerLabelSvg;
 
   if (label[0] === '<') {
     addForeignObjectLabel(label, labelSvg);
     // No margin for HTML elements
     marginX = marginY = 0;
   } else {
-    addTextLabel(label,
-                 labelSvg,
-                 Math.floor(node.labelCols),
-                 node.labelCut);
+    innerLabelSvg = addTextLabel(label,
+                                 labelSvg,
+                                 Math.floor(node.labelCols),
+                                 node.labelCut);
+    applyStyle(node.labelStyle, innerLabelSvg);
   }
 
-  var label_bbox = labelSvg.node().getBBox();
+  var labelBBox = labelSvg.node().getBBox();
   labelSvg.attr('transform',
-                'translate(' + (-label_bbox.width / 2) + ',' + (- label_bbox.height / 2) + ')');
+                'translate(' + (-labelBBox.width / 2) + ',' + (-labelBBox.height / 2) + ')');
 
   var bbox = root.node().getBBox();
-  
+
   rect
     .attr('rx', node.rx ? node.rx : 5)
     .attr('ry', node.ry ? node.ry : 5)
@@ -529,8 +581,10 @@ function addLabel(node, root, addingNode, marginX, marginY) {
     .attr('width', bbox.width + 2 * marginX)
     .attr('height', bbox.height + 2 * marginY)
     .attr('fill', '#fff');
-  
+
   if (addingNode) {
+    applyStyle(node.style, rect);
+
     if (node.fill) {
       rect.style('fill', node.fill);
     }
@@ -548,11 +602,11 @@ function addLabel(node, root, addingNode, marginX, marginY) {
     }
 
     if (node.href) {
-     root
+      root
         .attr('class', root.attr('class') + ' clickable')
         .on('click', function() {
-             window.open(node.href);
-         });
+          window.open(node.href);
+        });
     }
   }
 }
@@ -579,7 +633,7 @@ function addForeignObjectLabel(label, root) {
 }
 
 function addTextLabel(label, root, labelCols, labelCut) {
-  if (labelCut === undefined) labelCut = 'false';
+  if (labelCut === undefined) { labelCut = 'false'; }
   labelCut = (labelCut.toString().toLowerCase() === 'true');
 
   var node = root
@@ -597,20 +651,22 @@ function addTextLabel(label, root, labelCols, labelCut) {
         .attr('x', '1')
         .text(arr[i]);
   }
+
+  return node;
 }
 
 // Thanks to
 // http://james.padolsey.com/javascript/wordwrap-for-javascript/
 function wordwrap (str, width, cut, brk) {
-     brk = brk || '\n';
-     width = width || 75;
-     cut = cut || false;
+  brk = brk || '\n';
+  width = width || 75;
+  cut = cut || false;
 
-     if (!str) { return str; }
+  if (!str) { return str; }
 
-     var regex = '.{1,' +width+ '}(\\s|$)' + (cut ? '|.{' +width+ '}|.+$' : '|\\S+?(\\s|$)');
+  var regex = '.{1,' + width + '}(\\s|$)' + (cut ? '|.{' + width + '}|.+$' : '|\\S+?(\\s|$)');
 
-     return str.match( new RegExp(regex, 'g') ).join( brk );
+  return str.match(new RegExp(regex, 'g')).join(brk);
 }
 
 function findMidPoint(points) {
@@ -657,49 +713,49 @@ function intersectRect(rect, point) {
 
 function intersectEllipse(node, ellipseOrCircle, point) {
   // Formulae from: http://mathworld.wolfram.com/Ellipse-LineIntersection.html
-  
+
   var cx = node.x;
   var cy = node.y;
   var rx, ry;
-  
-  if(isCircle(ellipseOrCircle)) {
+
+  if (isCircle(ellipseOrCircle)) {
     rx = ry = ellipseOrCircle.r.baseVal.value;
   } else {
     rx = ellipseOrCircle.rx.baseVal.value;
     ry = ellipseOrCircle.ry.baseVal.value;
   }
- 
+
   var px = cx - point.x;
   var py = cy - point.y;
-  
+
   var det = Math.sqrt(rx * rx * py * py + ry * ry * px * px);
- 
+
   var dx = Math.abs(rx * ry * px / det);
-  if(point.x < cx) {
+  if (point.x < cx) {
     dx = -dx;
   }
   var dy = Math.abs(rx * ry * py / det);
-  if(point.y < cy) {
-    dy = - dy;
+  if (point.y < cy) {
+    dy = -dy;
   }
 
-  return {x: cx + dx, y: cy +dy};
+  return {x: cx + dx, y: cy + dy};
 }
 
 function sameSign(r1, r2) {
-    return r1 * r2 > 0;
+  return r1 * r2 > 0;
 }
 
 // Add point to the found intersections, but check first that it is unique.
-function addPoint(x, y, intersections){
-  if (!intersections.some(function (elm){ return elm[0] === x && elm[1] === y; })) {
+function addPoint(x, y, intersections) {
+  if (!intersections.some(function (elm) { return elm[0] === x && elm[1] === y; })) {
     intersections.push([x, y]);
   }
 }
 
-function intersectLine(x1, y1, x2, y2, x3, y3, x4, y4, intersections){
+function intersectLine(x1, y1, x2, y2, x3, y3, x4, y4, intersections) {
   // Algorithm from J. Avro, (ed.) Graphics Gems, No 2, Morgan Kaufmann, 1994, p7 and p473.
-  
+
   var a1, a2, b1, b2, c1, c2;
   var r1, r2 , r3, r4;
   var denom, offset, num;
@@ -720,7 +776,7 @@ function intersectLine(x1, y1, x2, y2, x3, y3, x4, y4, intersections){
     return /*DONT_INTERSECT*/;
   }
 
-  // Compute a2, b2, c2 where line joining points 3 and 4 is G(x,y) = a2 x + b2 y + c2 = 0 
+  // Compute a2, b2, c2 where line joining points 3 and 4 is G(x,y) = a2 x + b2 y + c2 = 0
   a2 = y4 - y3;
   b2 = x3 - x4;
   c2 = (x4 * y3) - (x3 * y4);
@@ -728,7 +784,7 @@ function intersectLine(x1, y1, x2, y2, x3, y3, x4, y4, intersections){
   // Compute r1 and r2
   r1 = (a2 * x1) + (b2 * y1) + c2;
   r2 = (a2 * x2) + (b2 * y2) + c2;
-  
+
   // Check signs of r1 and r2. If both point 1 and point 2 lie
   // on same side of second line segment, the line segments do
   // not intersect.
@@ -741,7 +797,7 @@ function intersectLine(x1, y1, x2, y2, x3, y3, x4, y4, intersections){
   if (denom === 0) {
     return /*COLLINEAR*/;
   }
-  
+
   offset = Math.abs(denom / 2);
 
   // The denom/2 is to get rounding instead of truncating. It
@@ -762,30 +818,31 @@ function intersectPolygon(node, polygon, point) {
   var y1 = node.y;
   var x2 = point.x;
   var y2 = point.y;
-  
+
   var intersections = [];
   var points = polygon.points;
-  
+
   var minx = 100000, miny = 100000;
-  for(var j = 0; j < points.numberOfItems; j++) {
+  for (var j = 0; j < points.numberOfItems; j++) {
     var p = points.getItem(j);
     minx = Math.min(minx, p.x);
     miny = Math.min(miny, p.y);
   }
-  
-  var left = x1 - node.width/2 - minx;
-  var top =  y1 - node.height/2 - miny;
-  
-  for(var i = 0; i < points.numberOfItems; i++) {
+
+  var left = x1 - node.width / 2 - minx;
+  var top =  y1 - node.height / 2 - miny;
+
+  for (var i = 0; i < points.numberOfItems; i++) {
     var p1 = points.getItem(i);
     var p2 = points.getItem(i < points.numberOfItems - 1 ? i + 1 : 0);
     intersectLine(x1, y1, x2, y2, left + p1.x, top + p1.y, left + p2.x, top + p2.y, intersections);
   }
- 
-  if(intersections.length === 1) {
+
+  if (intersections.length === 1) {
     return {x: intersections[0][0], y: intersections[0][1]};
   }
-  if(intersections.length > 1){
+
+  if (intersections.length > 1) {
     // More intersections, find the one nearest to edge end point
     intersections.sort(function(p, q) {
       var pdx = p[0] - point.x,
@@ -800,8 +857,8 @@ function intersectPolygon(node, polygon, point) {
     });
     return {x: intersections[0][0], y: intersections[0][1]};
   } else {
-   console.log('NO INTERSECTION FOUND, RETURN NODE CENTER', node);
-   return node;
+    console.log('NO INTERSECTION FOUND, RETURN NODE CENTER', node);
+    return node;
   }
 }
 
@@ -821,8 +878,15 @@ function bind(func, thisArg) {
   };
 }
 
+function applyStyle(style, domNode) {
+  if (style) {
+    var currStyle = domNode.attr('style') || '';
+    domNode.attr('style', currStyle + '; ' + style);
+  }
+}
+
 },{"d3":10,"dagre":11}],4:[function(require,module,exports){
-module.exports = '0.2.6';
+module.exports = '0.2.7';
 
 },{}],5:[function(require,module,exports){
 exports.Set = require('./lib/Set');
