@@ -471,18 +471,19 @@ function defaultZoomSetup(graph, svg) {
 
   if (root.select('rect.overlay').empty()) {
     // Create an overlay for capturing mouse events that don't touch foreground
-    root.append('rect')
+    var overlay = root.append('rect')
       .attr('class', 'overlay')
       .attr('width', '100%')
       .attr('height', '100%')
-      .style('fill', 'none');
+      .style('fill', 'none')
+      .style('pointer-events', 'all');
 
     // Capture the zoom behaviour from the svg
     svg = svg.append('g')
       .attr('class', 'zoom');
 
     if (this._zoom) {
-      root.call(this._zoom(graph, svg));
+      overlay.call(this._zoom(graph, svg));
     }
   }
 
@@ -886,7 +887,7 @@ function applyStyle(style, domNode) {
 }
 
 },{"d3":10,"dagre":11}],4:[function(require,module,exports){
-module.exports = '0.2.7';
+module.exports = '0.2.8';
 
 },{}],5:[function(require,module,exports){
 exports.Set = require('./lib/Set');
